@@ -1,120 +1,162 @@
+const desktop = matchMedia('(min-width: 51rem)');
 const tablist = document.querySelector('.tabs');
 const tabs = [...tablist.querySelectorAll('a')];
 const panels = tabs.map((tab) => document.getElementById(tab.hash.slice(1)));
-const copy = document.querySelector('.copy');
-const status = document.querySelector('#copy-status');
-const copyError = document.querySelector('.copy-error');
-let active;
-let resetTimer;
+const pagination = document.querySelector('.pagination');
+const afterPrompt = document.querySelector('.after-prompt');
+const progress = pagination?.querySelector('.progress');
+const copyStatus = document.querySelector('#copy-status');
+const promptStatus = document.querySelector('#prompt-status');
+let active = 0;
+let copyVersion = 0;
+let copyTimer;
 
-function resetCopy() {
-  clearTimeout(resetTimer);
-  copy.textContent = 'Copy prompt';
-  status.textContent = '';
-  copyError.hidden = true;
+function resetCopy(panel) {
+  clearTimeout(copyTimer);
+  panel.querySelector('.copy-idle').hidden = false;
+  panel.querySelector('.copy-done').hidden = true;
+  panel.querySelector('.manual-copy').hidden = true;
+  copyStatus.textContent = '';
 }
 
-function showPrompt(index) {
+function setLayout() {
+  const focused = document.activeElement;
+  const oldControls = desktop.matches ? [pagination, afterPrompt] : [tablist];
+  const moveFocus = oldControls.some((control) => control?.contains(focused));
+
+  tablist.hidden = !desktop.matches;
+  if (pagination) {
+    pagination.hidden = desktop.matches;
+    afterPrompt.hidden = desktop.matches || active === panels.length - 1;
+  }
+  panels.forEach((panel, index) => {
+    const heading = panel.querySelector('h2');
+    panel.tabIndex = desktop.matches ? 0 : -1;
+    panel.setAttribute('aria-labelledby', desktop.matches ? tabs[index].id : heading.id);
+    if (desktop.matches) panel.setAttribute('role', 'tabpanel');
+    else panel.removeAttribute('role');
+  });
+  if (moveFocus) (desktop.matches ? tabs[active] : panels[active]).focus();
+}
+
+function showPrompt(index, { announce = false, moveFocus = false } = {}) {
+  const changed = index !== active;
+  if (changed) {
+    copyVersion++;
+    resetCopy(panels[active]);
+  }
   active = index;
-  resetCopy();
   tabs.forEach((tab, position) => {
     const selected = index === position;
     tab.setAttribute('aria-selected', String(selected));
     tab.tabIndex = selected ? 0 : -1;
     panels[position].hidden = !selected;
   });
-  const tab = tabs[index];
-  if (tab.offsetLeft < tablist.scrollLeft || tab.offsetLeft + tab.offsetWidth > tablist.scrollLeft + tablist.clientWidth) {
-    tablist.scrollLeft = tab.offsetLeft;
+
+  const label = `Prompt ${index + 1} of ${panels.length}`;
+  if (pagination) {
+    progress.textContent = label;
+    pagination.querySelector('[data-step="-1"]').disabled = index === 0;
+    pagination.querySelector('[data-step="1"]').disabled = index === panels.length - 1;
+    afterPrompt.hidden = desktop.matches || index === panels.length - 1;
   }
+  if (moveFocus) {
+    panels[index].focus({ preventScroll: true });
+    panels[index].scrollIntoView({ block: 'start' });
+  }
+  if (announce && changed && !moveFocus) promptStatus.textContent = label;
 }
 
-function showFromUrl() {
+function indexFromUrl() {
   const index = tabs.findIndex((tab) => tab.hash === location.hash);
-  showPrompt(index < 0 ? 0 : index);
+  return index < 0 ? 0 : index;
 }
 
-function selectTab(index) {
+function selectPrompt(index, moveFocus = false) {
+  if (!tabs[index]) return;
   const hash = tabs[index].hash;
   if (location.hash !== hash) history.pushState(null, '', hash);
-  showPrompt(index);
+  showPrompt(index, { moveFocus });
 }
 
 tablist.setAttribute('role', 'tablist');
+tablist.setAttribute('aria-labelledby', 'session-date');
+tablist.setAttribute('aria-orientation', 'vertical');
 tabs.forEach((tab, index) => {
   tab.setAttribute('role', 'tab');
   tab.setAttribute('aria-controls', panels[index].id);
-  panels[index].setAttribute('role', 'tabpanel');
-  panels[index].setAttribute('aria-labelledby', tab.id);
-  panels[index].tabIndex = 0;
   tab.addEventListener('click', (event) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    selectTab(index);
+    selectPrompt(index);
   });
   tab.addEventListener('keydown', (event) => {
+    if (event.key === ' ') {
+      event.preventDefault();
+      selectPrompt(index);
+      return;
+    }
     const target = {
-      ArrowLeft: (index + tabs.length - 1) % tabs.length,
-      ArrowRight: (index + 1) % tabs.length,
+      ArrowUp: (index + tabs.length - 1) % tabs.length,
+      ArrowDown: (index + 1) % tabs.length,
       Home: 0,
       End: tabs.length - 1,
-      ' ': index,
     }[event.key];
     if (target === undefined) return;
     event.preventDefault();
-    selectTab(target);
+    selectPrompt(target);
     tabs[target].focus();
   });
 });
 
-function copyFallback(text) {
-  const previous = document.activeElement;
-  const input = document.createElement('textarea');
-  input.value = text;
-  input.readOnly = true;
-  input.className = 'clipboard-input';
-  document.body.append(input);
-  input.select();
-  input.setSelectionRange(0, text.length);
-  try {
-    return document.execCommand('copy');
-  } catch {
-    return false;
-  } finally {
-    input.remove();
-    previous?.focus({ preventScroll: true });
-  }
+for (const button of document.querySelectorAll('[data-step]')) {
+  button.addEventListener('click', () => selectPrompt(active + Number(button.dataset.step), true));
 }
 
-copy.addEventListener('click', async () => {
-  const index = active;
-  const prompt = panels[index].querySelector('.prompt-text');
-  const text = prompt.textContent;
-  let copied;
-  try {
-    await navigator.clipboard.writeText(text);
-    copied = true;
-  } catch {
-    if (active !== index) return;
-    copied = copyFallback(text);
-  }
-  if (active !== index) return;
-  resetCopy();
-  if (copied) {
-    copy.textContent = 'Copied!';
-    status.textContent = 'Prompt copied to clipboard.';
-    resetTimer = setTimeout(resetCopy, 2200);
-    return;
-  }
-  const selection = window.getSelection();
-  const range = document.createRange();
-  range.selectNodeContents(prompt);
-  selection.removeAllRanges();
-  selection.addRange(range);
-  copyError.hidden = false;
-  status.textContent = copyError.textContent;
-});
+for (const panel of panels) {
+  const copy = panel.querySelector('.copy');
+  const copyIdle = copy.querySelector('.copy-idle');
+  const copyDone = copy.querySelector('.copy-done');
+  const fallback = panel.querySelector('.manual-copy');
+  const manualText = fallback.querySelector('textarea');
+  const original = panel.querySelector('.prompt-source').content.textContent;
 
-window.addEventListener('hashchange', showFromUrl);
-showFromUrl();
-copy.hidden = false;
+  manualText.addEventListener('focus', () => manualText.select());
+  copy.addEventListener('click', async () => {
+    const version = ++copyVersion;
+    resetCopy(panel);
+    try {
+      await navigator.clipboard.writeText(original);
+    } catch {
+      if (version !== copyVersion) return;
+      manualText.value = original;
+      fallback.hidden = false;
+      copyStatus.textContent = fallback.querySelector('p').textContent;
+      return;
+    }
+    if (version !== copyVersion) return;
+    copyIdle.hidden = true;
+    copyDone.hidden = false;
+    copyStatus.textContent = 'Prompt copied to clipboard.';
+    copyTimer = setTimeout(() => resetCopy(panel), 2400);
+  });
+  panel.querySelector('.prompt-tools').hidden = false;
+}
+
+desktop.addEventListener('change', setLayout);
+document.querySelector('.skip').addEventListener('click', (event) => {
+  event.preventDefault();
+  const main = document.querySelector('#main');
+  main.focus({ preventScroll: true });
+  main.scrollIntoView({ block: 'start' });
+});
+window.addEventListener('hashchange', () => {
+  const index = indexFromUrl();
+  const focused = document.activeElement;
+  const focusTab = index !== active && desktop.matches && tablist.contains(focused);
+  const moveFocus = index !== active && (!desktop.matches || panels[active].contains(focused));
+  showPrompt(index, { announce: !focusTab, moveFocus });
+  if (focusTab) tabs[index].focus();
+});
+showPrompt(indexFromUrl());
+setLayout();

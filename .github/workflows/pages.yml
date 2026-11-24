@@ -25,8 +25,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
       - uses: actions/configure-pages@v5
-      - run: node build.mjs
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
       - uses: actions/upload-pages-artifact@v4
         with:
           path: _site
