@@ -10,11 +10,12 @@ permissions:
 
 concurrency:
   group: github-pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     permissions:
       contents: read
       pages: read
@@ -28,8 +29,9 @@ jobs:
           cache: npm
       - uses: actions/configure-pages@v5
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
       - run: npm test
+        env:
+          DREAM_ROOM_BROWSER_CHANNEL: chrome
       - uses: actions/upload-pages-artifact@v4
         with:
           path: _site
