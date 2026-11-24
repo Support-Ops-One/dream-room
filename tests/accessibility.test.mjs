@@ -78,7 +78,7 @@ before(async () => {
   });
   await new Promise((done, reject) => server.listen(0, '127.0.0.1', done).once('error', reject));
   origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch();
+  browser = await chromium.launch({ channel: process.env.DREAM_ROOM_BROWSER_CHANNEL });
 });
 
 after(async () => {
